@@ -1,13 +1,20 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Search, Mic, Camera, Brain } from 'lucide-react';
+import { Search, Mic, Camera, Brain, Loader2, Sparkles } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { searchMemoriesWithGemini, generateMemoryInsight, type SearchResult } from '@/services/geminiApi';
+import { useToast } from '@/hooks/use-toast';
 
 export function SearchInterface() {
   const [query, setQuery] = useState('');
   const [searchType, setSearchType] = useState<'text' | 'voice' | 'image' | 'concept'>('text');
+  const [results, setResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [insight, setInsight] = useState<string>('');
+  const { toast } = useToast();
 
   const searchTypes = [
     { type: 'text' as const, icon: Search, label: 'Text Search', description: 'Find by keywords' },
@@ -23,6 +30,58 @@ export function SearchInterface() {
     'Photos from my Tokyo trip',
     'Voice memos about dreams',
   ];
+
+  const handleSearch = async () => {
+    if (!query.trim()) {
+      toast({
+        title: "Empty Search",
+        description: "Please enter a search query",
+      });
+      return;
+    }
+
+    setIsSearching(true);
+    setInsight('');
+    
+    try {
+      const searchResults = await searchMemoriesWithGemini({
+        query: query.trim(),
+        searchType
+      });
+      
+      setResults(searchResults);
+      
+      if (searchResults.length > 0) {
+        const generatedInsight = await generateMemoryInsight(searchResults);
+        setInsight(generatedInsight);
+        
+        toast({
+          title: "Search Complete",
+          description: `Found ${searchResults.length} relevant memories`,
+        });
+      } else {
+        toast({
+          title: "No Results",
+          description: "No memories found for your search query",
+        });
+      }
+    } catch (error) {
+      console.error('Search failed:', error);
+      toast({
+        title: "Search Error",
+        description: "Unable to search memories. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  const handleSuggestionClick = (suggestion: string) => {
+    setQuery(suggestion);
+    // Auto-search when clicking suggestion
+    setTimeout(() => handleSearch(), 100);
+  };
 
   return (
     <motion.div 
@@ -54,14 +113,22 @@ export function SearchInterface() {
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
             placeholder="Search your memories with AI-powered understanding..."
             className="pl-12 py-6 text-lg bg-input/50 border-border/30 focus:border-primary/50 focus:ring-primary/20"
+            disabled={isSearching}
           />
           <Button 
             className="absolute right-2 top-1/2 transform -translate-y-1/2"
             size="sm"
+            onClick={handleSearch}
+            disabled={isSearching}
           >
-            Search
+            {isSearching ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              'Search'
+            )}
           </Button>
         </div>
 
@@ -74,7 +141,7 @@ export function SearchInterface() {
                 key={index}
                 variant="secondary" 
                 className="cursor-pointer hover:bg-secondary/80 transition-colors px-3 py-1"
-                onClick={() => setQuery(suggestion)}
+                onClick={() => handleSuggestionClick(suggestion)}
               >
                 {suggestion}
               </Badge>
@@ -104,6 +171,80 @@ export function SearchInterface() {
             );
           })()}
         </motion.div>
+
+        {/* Search Results */}
+        {results.length > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="space-y-4"
+          >
+            {/* AI Insight */}
+            {insight && (
+              <Card className="border-primary/20 bg-primary/5">
+                <CardHeader className="pb-3">
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <Sparkles className="h-5 w-5 text-primary" />
+                    AI Insight
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-muted-foreground">{insight}</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Results Grid */}
+            <div className="grid gap-4 md:grid-cols-2">
+              {results.map((result) => (
+                <motion.div
+                  key={result.id}
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.3, delay: 0.1 }}
+                >
+                  <Card className="hover:shadow-md transition-shadow cursor-pointer glass border-border/10">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between">
+                        <CardTitle className="text-lg font-medium line-clamp-1">
+                          {result.title}
+                        </CardTitle>
+                        <Badge 
+                          variant="outline" 
+                          className="ml-2 text-xs"
+                        >
+                          {Math.round(result.relevance * 100)}%
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <p className="text-muted-foreground line-clamp-2">
+                        {result.content}
+                      </p>
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-wrap gap-1">
+                          {result.tags.slice(0, 3).map((tag, idx) => (
+                            <Badge 
+                              key={idx}
+                              variant="secondary" 
+                              className="text-xs"
+                            >
+                              {tag}
+                            </Badge>
+                          ))}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {new Date(result.timestamp).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              ))}
+            </div>
+          </motion.div>
+        )}
       </div>
     </motion.div>
   );
